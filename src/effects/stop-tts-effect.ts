@@ -12,8 +12,8 @@ interface OverlayData {
 
 export const StopTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = {
     definition: {
-        id: "dennisontheinternet:polly-extended-v2:stop-text-to-speech",
-        name: "Stop Text-To-Speech (Amazon Polly Extended V2)",
+        id: "dennisontheinternet:polly-extended:stop-text-to-speech",
+        name: "Stop Text-To-Speech (Amazon Polly Extended)",
         description: "Stop a Text-To-Speech Extended message from playing.",
         icon: "fad fa-question",
         categories: ["fun", "integrations"]

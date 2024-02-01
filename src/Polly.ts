@@ -88,7 +88,7 @@ export function getFriendlyNameWithEngine(voice: PollyVoice) {
     return `${voice.LanguageName}: ${voice.Name}, ${voice.Gender} (${getEngineName(voice)})`;
 }
 
-const getPollyClient = () => {
+export const getPollyClient = () => {
     const integration = scriptModules.integrationManager.getIntegrationDefinitionById("aws").userSettings as PollyIntegration;
     return new PollyClient({
         credentials: {
@@ -168,28 +168,11 @@ const fetchVoices = async (engine: Engine) => {
     return response;
 }
 
-export const synthesizeSpeechCommand = (text: string, ssml: boolean, voice: PollyVoice) =>
-    new SynthesizeSpeechCommand({
-        Engine: getEngine(voice),
-        LanguageCode: voice.LanguageCode,
-        OutputFormat: OutputFormat.MP3,
-        Text: text,
-        TextType: ssml ? "ssml" : "text",
-        VoiceId: voice.Id
-    });
-
-export async function speak(command: SynthesizeSpeechCommand | SynthesizeSpeechCommand[]) {
+export async function speak(command: SynthesizeSpeechCommand) {
     const polly = getPollyClient();
-    let pendingJobs: SynthesizeSpeechCommand[];
-    let promises: Promise<string>[] = [];
-    if (Array.isArray(command)) {
-        pendingJobs = command;
-    }
-    else {
-        pendingJobs = [command];
-    }
+    return polly.send<SynthesizeSpeechCommandInput, SynthesizeSpeechCommandOutput>(command);
 
-    pendingJobs.forEach(job => {
+    /*pendingJobs.forEach(job => {
         promises.push(new Promise<string>(async (resolve, reject) => {
             try {
                 const response = await polly.send<SynthesizeSpeechCommandInput, SynthesizeSpeechCommandOutput>(job);
@@ -208,5 +191,5 @@ export async function speak(command: SynthesizeSpeechCommand | SynthesizeSpeechC
         }));
     });
 
-    return Promise.all(promises);
+    return Promise.all(promises);*/
 }

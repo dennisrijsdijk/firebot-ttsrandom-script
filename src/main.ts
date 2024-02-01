@@ -15,7 +15,7 @@ const script: Firebot.CustomScript<Params> = {
       name: "TTSRandom Script",
       description: "A Firebot Custom Script that adds random-voice TTS.",
       author: "DennisOnTheInternet",
-      version: "0.0.1",
+      version: "1.0",
       firebotVersion: "5",
       startupOnly: true,
     };
@@ -31,7 +31,7 @@ const script: Firebot.CustomScript<Params> = {
     scriptModules.effectManager.registerEffect(StopTextToSpeechEffectType);
     scriptModules.replaceVariableManager.registerReplaceVariable(CleanSsmlStringVariable);
     settings = runRequest.firebot.settings;
-    tmpdir = scriptModules.path.join(SCRIPTS_DIR, '..', '..', '..', '..', 'awspollysfx');
+    tmpdir = scriptModules.path.join(SCRIPTS_DIR, '..', '..', '..', '..', 'tmp', 'awspollyfx');
   },
 };
 

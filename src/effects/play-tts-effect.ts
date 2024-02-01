@@ -1,9 +1,15 @@
-import {scriptModules, webServer} from "../main";
+import {scriptModules, tmpdir, webServer} from "../main";
 import {getVoices, PollyVoice, speak} from "../Polly";
 import {Effects} from "@crowbartools/firebot-custom-scripts-types/types/effects";
 import {OutputFormat, SynthesizeSpeechCommand, TextType} from "@aws-sdk/client-polly";
 import {parseXml} from "@rgrove/parse-xml";
 import EffectType = Effects.EffectType;
+import {parseSSML} from "../SSML";
+import * as fs from "fs";
+import * as fsp from "fs/promises";
+import path from "path";
+import {randomUUID} from "node:crypto";
+import {Readable} from "node:stream";
 
 interface EffectModel {
     useRandomStandard: boolean;
@@ -13,7 +19,7 @@ interface EffectModel {
     text: string;
     message: string;
     whisper: string;
-    chatter: "Streamer" | "Bot";
+    chatter: "streamer" | "bot";
     sendAsReply: boolean;
     isSsml: boolean;
     waitForSound: boolean;
@@ -21,15 +27,15 @@ interface EffectModel {
 }
 
 interface OverlayData {
-    resourceTokens: string[];
+    resourceToken: string;
     overlayInstance: string;
     volume: number;
 }
 
 export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = {
     definition: {
-        id: "dennisontheinternet:polly-extended-v2:text-to-speech",
-        name: "Text-To-Speech (Amazon Polly Extended V2)",
+        id: "dennisontheinternet:polly-extended:text-to-speech",
+        name: "Text-To-Speech (Amazon Polly Extended)",
         description: "Have Firebot read out some text using Amazon Polly.",
         icon: "fad fa-question",
         categories: ["fun", "integrations"],
@@ -144,7 +150,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                 <div class="volume-slider-wrapper">
                     <i class="fal fa-volume-down volume-low"></i>
                     <rzslider rz-slider-model="effect.volume"
-                              rz-slider-options="{floor: 1, ceil: 10, hideLimitLabels: true, showSelectionBar: true}"></rzslider>
+                              rz-slider-options="{floor: 0.1, ceil: 10, step: 0.1, precision: 1, hideLimitLabels: true, showSelectionBar: true, translate: sliderTranslate}"></rzslider>
                     <i class="fal fa-volume-up volume-high"></i>
                 </div>
             </eos-container>
@@ -171,6 +177,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         </div>
     `,
     optionsController: ($scope, backendCommunicator: any, $q: any, $rootScope: any) => {
+        $scope.sliderTranslate = (value: number) => Math.round(value * 10) + '%';
 
         if ($scope.effect.useRandomStandard == null) {
             $scope.effect.useRandomStandard = false;
@@ -213,7 +220,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         const effect = scope.effect;
 
         const data: OverlayData = {
-            resourceTokens: [],
+            resourceToken: "",
             volume: effect.volume,
             overlayInstance: effect.overlayInstance,
         };
@@ -232,25 +239,13 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         } else {
             voice = effect.voice;
         }
-        try {
-            if (scope.effect.isSsml) {
-                function parse(ssml: string): string {
-                    try {
-                        scriptModules.logger.debug("TTS: Trying to parse SSML:", ssml);
-                        parseXml(ssml);
-                        scriptModules.logger.debug("TTS: SSML Parsed successfully.");
-                        return ssml;
-                    } catch (err: any) {
-                        if (err.message.includes("Missing end tag for element ")) {
-                            scriptModules.logger.debug("TTS: Found unencoded < in SSML. Trying again.");
-                            return parse(ssml.substring(0, err.pos) + '&lt;' + ssml.substring(err.pos + 1));
-                        } else {
-                            scriptModules.logger.error("TTS: Error while trying to parse SSML.", ssml, err);
-                            throw err;
-                        }
-                    }
-                }
 
+        let speechFilePath: string;
+
+        try {
+            let text: string = effect.text;
+
+            if (scope.effect.isSsml) {
                 scriptModules.logger.debug("TTS: Escaping SSML Characters.");
 
                 let ssml: string = scope.effect.text.replace(/&(?!(?:apos|quot|[gl]t|amp);|#)/g, "&amp;")
@@ -259,40 +254,53 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
 
                 scriptModules.logger.debug("TTS: Parsing SSML.");
 
-                const text = parse("<speak>" + ssml + "</speak>");
-                try {
-                    scriptModules.logger.debug("TTS: Synthesizing SSML TTS.");
-                    data.resourceTokens = await speak(new SynthesizeSpeechCommand({
-                        Engine: voice.SupportedEngines[0],
-                        LanguageCode: voice.LanguageCode,
-                        OutputFormat: OutputFormat.MP3,
-                        SampleRate: "24000",
-                        Text: text,
-                        TextType: TextType.SSML,
-                        VoiceId: voice.Id
-                    }));
-                    scriptModules.logger.debug("TTS: Synthesized.");
-                } catch (err) {
-                    scriptModules.logger.error("TTS: Error from AWS speaking SSML TTS:", text, err);
-                    throw err;
+                if (ssml.startsWith("<speak>") && ssml.endsWith("</speak>")) {
+                    text = parseSSML(ssml);
+                } else {
+                    text = parseSSML("<speak>" + ssml + "</speak>");
                 }
-            } else {
+            }
+            try {
+                scriptModules.logger.debug("TTS: Synthesizing TTS.");
+                const commandOutput = await speak(new SynthesizeSpeechCommand({
+                    Engine: voice.SupportedEngines[0],
+                    LanguageCode: voice.LanguageCode,
+                    OutputFormat: OutputFormat.MP3,
+                    SampleRate: "24000",
+                    Text: text,
+                    TextType: scope.effect.isSsml ? TextType.SSML : TextType.TEXT,
+                    VoiceId: voice.Id
+                }));
+
+                scriptModules.logger.debug("TTS: Synthesized. Saving to file...");
+
                 try {
-                    scriptModules.logger.debug("TTS: Synthesizing non-SSML TTS.");
-                    data.resourceTokens = await speak(new SynthesizeSpeechCommand({
-                        Engine: voice.SupportedEngines[0],
-                        LanguageCode: voice.LanguageCode,
-                        OutputFormat: OutputFormat.MP3,
-                        SampleRate: "24000",
-                        Text: effect.text,
-                        TextType: TextType.TEXT,
-                        VoiceId: voice.Id
-                    }));
-                    scriptModules.logger.debug("TTS: Synthesized.");
-                } catch (err) {
-                    scriptModules.logger.error("TTS: Error from AWS speaking TTS:", effect.text, err);
-                    throw err;
+                    if (!(fs.existsSync(tmpdir))) {
+                        await fsp.mkdir(tmpdir, { recursive: true });
+                    }
+
+                    speechFilePath = scriptModules.path.join(tmpdir, `${randomUUID()}-plus.mp3`);
+
+                    const destination = fs.createWriteStream(speechFilePath);
+                    debugger;
+                    const stream = (commandOutput.AudioStream as Readable).pipe(destination, { end: true });
+                    await new Promise(fulfill => stream.on("finish", fulfill));
+                    debugger;
+                } catch (error) {
+                    debugger;
+                    return {
+                        success: true,
+                        outputs: {
+                            speechSynthesisSuccess: false,
+                            speechSynthesisError: "Unable to write speech to temporary file"
+                        }
+                    };
                 }
+
+                scriptModules.logger.debug("TTS: Saved.");
+            } catch (err) {
+                scriptModules.logger.error("TTS: Error from AWS speaking TTS:", effect.text, err);
+                throw err;
             }
         } catch (error: any) {
             return {
@@ -316,11 +324,11 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
 
         if (scope.effect.message != null && scope.effect.message.length != 0) {
             let formattedMessage: string = scope.effect.message
-                .replace(/\{ttsLanguage\}/gm, voice.LanguageName)
-                .replace(/\{ttsVoice\}/gm, voice.Name)
-                .replace(/\{ttsGender\}/gm, voice.Gender)
-                .replace(/\{ttsLanguageCode\}/gm, voice.LanguageCode)
-                .replace(/\{ttsEngine\}/gm, voice.SupportedEngines[0]);
+                .replace(/\{ttsLanguage}/gm, voice.LanguageName)
+                .replace(/\{ttsVoice}/gm, voice.Name)
+                .replace(/\{ttsGender}/gm, voice.Gender)
+                .replace(/\{ttsLanguageCode}/gm, voice.LanguageCode)
+                .replace(/\{ttsEngine}/gm, voice.SupportedEngines[0]);
 
             scriptModules.logger.debug("TTS: Sending chat message.");
 
@@ -330,17 +338,25 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                 effect.chatter, // @ts-ignore
                 !effect.whisper && effect.sendAsReply ? messageId : undefined);
         }
+        // @ts-ignore
+        const duration: number = await scriptModules.frontendCommunicator.fireEventAsync("getSoundDuration", {
+            path: speechFilePath
+        });
+        const durationInMils = (Math.round(duration) || 0) * 1000;
+
+        data.resourceToken = scriptModules.resourceTokenManager.storeResourcePath(
+            speechFilePath,
+            duration
+        )
 
         let waitPromise = new Promise<void>(async (resolve, reject) => {
-            const listener = (event: any) => {
+            const listener = async (event: any) => {
                 try {
-                    if (event.name === "tts-end" && (event.data.overlayResource === data.resourceTokens[0]
-                        || event.data.overlayInstance === data.overlayInstance)) {
+                    if (event.name === "tts-end" && event.data.overlayResource === data.resourceToken
+                        && event.data.overlayInstance === data.overlayInstance) {
                         // @ts-ignore
                         webServer.removeListener("overlay-event", listener);
-                        /*data.resourceTokens.forEach(token => {
-                            webServer.unregisterCustomRoute("pollyplus", token, "GET");
-                        });*/
+                        await fsp.unlink(speechFilePath);
                         resolve();
                     }
                 } catch (err) {
@@ -366,10 +382,9 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
             success: true,
             outputs: {
                 speechSynthesisSuccess: true,
-                speechSynthesisError: "http://localhost:7472/integrations/pollyplus/" + data.resourceTokens[0]
+                speechSynthesisError: ""
             }
         };
-
     },
     overlayExtension: {
         event: {
@@ -395,9 +410,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                 // @ts-ignore
                 startedVidCache[uuid] = "tts";
 
-                let audioIndex = 0;
-
-                let audioElement = `<audio id="${uuid}" src="http://${window.location.hostname}:7472/integrations/pollyplus/${data.resourceTokens[audioIndex]}"></audio>`;
+                let audioElement = `<audio id="${uuid}" src="http://${window.location.hostname}:7472/resource/${data.resourceToken}"></audio>`;
 
                 // Throw audio element on page.
                 $("#wrapper").append(audioElement);
@@ -409,17 +422,13 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                 audio.oncanplay = () => audio.play();
 
                 audio.onended = (ev) => {
-                    if (++audioIndex >= data.resourceTokens.length || ev.type === "forceCancel") {
-                        // eslint-disable-line no-undef
-                        // @ts-ignore
-                        delete startedVidCache[uuid];
-                        $("#" + uuid).remove();
-                        // eslint-disable-next-line no-undef
-                        // @ts-ignore
-                        sendWebsocketEvent("tts-end", {overlayResource: data.resourceTokens[0]});
-                    } else {
-                        audio.src = `http://${window.location.hostname}:7472/integrations/pollyplus/${data.resourceTokens[audioIndex]}`;
-                    }
+                    // eslint-disable-line no-undef
+                    // @ts-ignore
+                    delete startedVidCache[uuid];
+                    $("#" + uuid).remove();
+                    // eslint-disable-next-line no-undef
+                    // @ts-ignore
+                    sendWebsocketEvent("tts-end", {overlayResource: data.resourceToken});
                 };
             }
         }
