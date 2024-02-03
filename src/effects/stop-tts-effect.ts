@@ -1,6 +1,7 @@
 import {scriptModules, webServer} from "../main";
 import {Effects} from "@crowbartools/firebot-custom-scripts-types/types/effects";
 import EffectType = Effects.EffectType;
+import statusEmitter from "../StatusEmitter";
 
 interface EffectModel {
     overlayInstance: string;
@@ -35,8 +36,8 @@ export const StopTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         // send event to the overlay
         // @ts-ignore
         webServer.sendToOverlay("stop-tts", data);
-        // @ts-ignore
-        webServer.emit("overlay-event", {name: "tts-end", overlayInstance: data.overlayInstance});
+
+        statusEmitter.emit(data.overlayInstance ?? "");
 
         return true;
 
@@ -49,10 +50,11 @@ export const StopTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                 Object.keys(startedVidCache).forEach(key => {
                     // @ts-ignore
                     if (startedVidCache[key] === "tts") {
-                        //(document.getElementById(key) as HTMLAudioElement).onended(new Event("forceCancel"));
                         document.getElementById(key).remove();
+                        // @ts-ignore
+                        delete startedVidCache[key];
                     }
-                })
+                });
             }
         }
     }

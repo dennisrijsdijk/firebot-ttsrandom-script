@@ -10,6 +10,7 @@ import * as fsp from "fs/promises";
 import path from "path";
 import {randomUUID} from "node:crypto";
 import {Readable} from "node:stream";
+import statusEmitter from "../StatusEmitter";
 
 interface EffectModel {
     useRandomStandard: boolean;
@@ -219,6 +220,17 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
     onTriggerEvent: async (scope) => {
         const effect = scope.effect;
 
+        if (effect.text == null || effect.text.length === 0) {
+            scriptModules.logger.error("TTS: Message was empty string");
+            return {
+                success: true,
+                outputs: {
+                    speechSynthesisSuccess: false,
+                    speechSynthesisError: "Message was empty string."
+                }
+            };
+        }
+
         const data: OverlayData = {
             resourceToken: "",
             volume: effect.volume,
@@ -347,24 +359,31 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         data.resourceToken = scriptModules.resourceTokenManager.storeResourcePath(
             speechFilePath,
             duration
-        )
+        );
 
-        let waitPromise = new Promise<void>(async (resolve, reject) => {
-            const listener = async (event: any) => {
-                try {
-                    if (event.name === "tts-end" && event.data.overlayResource === data.resourceToken
-                        && event.data.overlayInstance === data.overlayInstance) {
-                        // @ts-ignore
-                        webServer.removeListener("overlay-event", listener);
-                        await fsp.unlink(speechFilePath);
+        let waitPromise = new Promise<void>(async (resolve) => {
+            let statusEmitterListener: () => void;
+            let waitTimeout: NodeJS.Timeout;
+
+            await Promise.race([
+                new Promise<void>((resolve) => {
+                    statusEmitterListener = () => {
+                        clearTimeout(waitTimeout);
                         resolve();
+                        scriptModules.logger.debug("TTS: Ended by stop effect");
                     }
-                } catch (err) {
-                    scriptModules.logger.error("Error while trying to process overlay-event for play-tts: ", err);
-                }
-            };
-            // @ts-ignore
-            webServer.on("overlay-event", listener);
+                    statusEmitter.once(data.overlayInstance ?? "", statusEmitterListener);
+                }),
+                new Promise<void>((resolve) => {
+                    waitTimeout = setTimeout(() => {
+                        statusEmitter.off(data.overlayInstance ?? "", statusEmitterListener)
+                        resolve();
+                        scriptModules.logger.debug("TTS: Ended by timeout");
+                    }, durationInMils);
+                })
+            ]);
+            await fsp.unlink(speechFilePath);
+            resolve();
         });
 
         scriptModules.logger.debug("TTS: Sending TTS event to overlay.");
@@ -426,9 +445,6 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                     // @ts-ignore
                     delete startedVidCache[uuid];
                     $("#" + uuid).remove();
-                    // eslint-disable-next-line no-undef
-                    // @ts-ignore
-                    sendWebsocketEvent("tts-end", {overlayResource: data.resourceToken});
                 };
             }
         }
