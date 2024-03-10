@@ -354,7 +354,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
         const duration: number = await scriptModules.frontendCommunicator.fireEventAsync("getSoundDuration", {
             path: speechFilePath
         });
-        const durationInMils = (Math.round(duration) || 1) * 1500;
+        const durationInMils = (Math.ceil(duration) || 1) * 1500;
 
         data.resourceToken = scriptModules.resourceTokenManager.storeResourcePath(
             speechFilePath,
@@ -379,7 +379,7 @@ export const PlayTextToSpeechEffectType: EffectType<EffectModel, OverlayData> = 
                         statusEmitter.off(data.overlayInstance ?? "", statusEmitterListener)
                         resolve();
                         scriptModules.logger.debug("TTS: Ended by timeout");
-                    }, durationInMils + 1500);
+                    }, durationInMils);
                 })
             ]);
             await fsp.unlink(speechFilePath);

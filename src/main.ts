@@ -15,7 +15,7 @@ const script: Firebot.CustomScript<Params> = {
       name: "TTSRandom Script",
       description: "A Firebot Custom Script that adds random-voice TTS.",
       author: "DennisOnTheInternet",
-      version: "1.0",
+      version: "1.1",
       firebotVersion: "5",
       startupOnly: true,
     };
